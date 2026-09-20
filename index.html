@@ -315,7 +315,7 @@
   var state = {
     db: null,
     dbReady: false,
-    config: {playerA:"Bryan", playerB:"Michelle", pin:"3746", currentWeek:3, seasonYear:2026},
+    config: {playerA:"Bryan", playerB:"Michelle", pin:"3746", currentWeek:2, seasonYear:2026},
     configLoaded: false,
     games: [],
     picks: [],
@@ -860,6 +860,18 @@
   var ESPN_ABBR = {JAX:'JAC', LAR:'LA', WSH:'WAS'};
   function normAbbr(a){ return ESPN_ABBR[a] || a; }
 
+  // NFL weeks run Tue->Mon; Week 1 started Tue Sep 8 2026 00:00 ET (04:00 UTC).
+  // Deriving the week from each game's own kickoff date (rather than trusting
+  // ESPN's self-reported "current week" number) keeps labels accurate even
+  // when ESPN's own week grouping drifts from the real schedule.
+  var SEASON_WEEK1_START_UTC = Date.UTC(2026,8,8,4,0,0);
+  function computeWeekFromDate(iso){
+    var d = new Date(iso).getTime();
+    var diffDays = Math.floor((d - SEASON_WEEK1_START_UTC) / 86400000);
+    var wk = 1 + Math.floor(diffDays/7);
+    return wk < 1 ? 1 : wk;
+  }
+
   function espnEventToDoc(ev, weekNum){
     var comp = ev.competitions && ev.competitions[0];
     if (!comp) return null;
@@ -890,20 +902,26 @@
   function syncScoresNow(){
     if (!state.db || state.syncing) return Promise.resolve();
     state.syncing = true; scheduleRender();
-    return fetchWeek(null).then(function(json){
-      var wk = json.week && json.week.number;
-      if (!wk || !json.events) throw new Error('bad-response');
+    // Determine "now"'s week from the actual calendar date, not from ESPN's
+    // self-reported current-week pointer (that pointer has been observed to
+    // drift ahead of the real schedule mid-week). Explicit &week=N requests
+    // to ESPN return that week's real games reliably.
+    var wk = computeWeekFromDate(new Date().toISOString());
+    return fetchWeek(wk).then(function(json){
+      if (!json.events) throw new Error('bad-response');
       var batch = state.db.batch();
       (json.events||[]).forEach(function(ev){
-        var d = espnEventToDoc(ev, wk);
-        if (d) batch.set(state.db.collection('games').doc('w'+wk+'-'+ev.id), d, {merge:true});
+        var evWeek = computeWeekFromDate(ev.date);
+        var d = espnEventToDoc(ev, evWeek);
+        if (d) batch.set(state.db.collection('games').doc('w'+evWeek+'-'+ev.id), d, {merge:true});
       });
       var p1 = batch.commit();
       var p2 = fetchWeek(wk+1).then(function(json2){
         var batch2 = state.db.batch();
         (json2.events||[]).forEach(function(ev){
-          var d = espnEventToDoc(ev, wk+1);
-          if (d) batch2.set(state.db.collection('games').doc('w'+(wk+1)+'-'+ev.id), d, {merge:true});
+          var evWeek = computeWeekFromDate(ev.date);
+          var d = espnEventToDoc(ev, evWeek);
+          if (d) batch2.set(state.db.collection('games').doc('w'+evWeek+'-'+ev.id), d, {merge:true});
         });
         return batch2.commit();
       }).catch(function(){});
@@ -942,19 +960,14 @@
         db.doc('config/app').set(state.config).catch(function(){});
       }
       state.configLoaded = true;
-      if (state.selectedWeek == null) state.selectedWeek = state.config.currentWeek || 1;
+      if (state.selectedWeek == null) state.selectedWeek = computeWeekFromDate(new Date().toISOString());
       scheduleRender();
     }, function(){});
 
     db.collection('games').onSnapshot(function(qs){
       state.games = qs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
       if (state.selectedWeek == null){
-        if (state.config && state.config.currentWeek){
-          state.selectedWeek = state.config.currentWeek;
-        } else {
-          var wks = allWeeksWithGames();
-          state.selectedWeek = wks.length ? wks[wks.length-1] : 1;
-        }
+        state.selectedWeek = computeWeekFromDate(new Date().toISOString());
       }
       scheduleRender();
     }, function(){});
@@ -969,7 +982,6 @@
     document.addEventListener('visibilitychange', function(){ if (!document.hidden) syncScoresNow(); });
   }
 
-  if (state.selectedWeek == null) state.selectedWeek = state.config.currentWeek;
   boot();
 })();
 </script>
