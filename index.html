@@ -949,8 +949,12 @@
     db.collection('games').onSnapshot(function(qs){
       state.games = qs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
       if (state.selectedWeek == null){
-        var wks = allWeeksWithGames();
-        state.selectedWeek = wks.length ? wks[wks.length-1] : (state.config.currentWeek||1);
+        if (state.config && state.config.currentWeek){
+          state.selectedWeek = state.config.currentWeek;
+        } else {
+          var wks = allWeeksWithGames();
+          state.selectedWeek = wks.length ? wks[wks.length-1] : 1;
+        }
       }
       scheduleRender();
     }, function(){});
