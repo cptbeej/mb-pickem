@@ -175,6 +175,8 @@
   .status{font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);}
   .status.live{color:var(--live);}
   .status.final{color:var(--ink);}
+  .kickofftime{font-size:11px; color:var(--muted); font-weight:600;}
+  .lockedbadge{font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent-2); background:color-mix(in srgb, var(--accent-2) 14%, transparent); padding:2px 7px; border-radius:999px;}
   .gtitle{font-size:11px; color:var(--muted); font-weight:600; flex:1; text-align:right;}
   .editscore{
     background:none; border:none; color:var(--muted); font-size:14px; cursor:pointer; padding:2px 4px;
@@ -354,9 +356,10 @@
     var h = Math.round(m/60);
     return h+'h ago';
   }
+  var PICK_LOCK_LEAD_MS = 15*60*1000; // picks lock 15 minutes before kickoff
   function isLocked(g){
     if (g.state && g.state !== 'scheduled') return true;
-    return Date.now() >= new Date(g.kickoff).getTime();
+    return Date.now() >= (new Date(g.kickoff).getTime() - PICK_LOCK_LEAD_MS);
   }
 
   function gamesForWeek(wk){
@@ -640,6 +643,7 @@
     var otherPick = pickFor(g.week, g.eventId, otherName);
     var isFinal = g.state==='final';
     var isLive = g.state==='in';
+    var preKickoffLocked = locked && !isFinal && !isLive;
 
     var statusTxt;
     if (isFinal) statusTxt = 'Final';
@@ -681,7 +685,7 @@
 
     return (
       '<div class="game">'+
-        '<div class="gametop"><span class="status '+(isLive?'live':isFinal?'final':'')+'">'+statusTxt+'</span><span class="gtitle">'+esc(g.title||'')+'</span><button class="editscore" data-edit-game="'+esc(g.id)+'" title="Edit score" aria-label="Edit score">&#9998;</button></div>'+
+        '<div class="gametop"><span class="status '+(isLive?'live':isFinal?'final':'')+'">'+statusTxt+'</span>'+((isFinal||isLive)?'<span class="kickofftime">'+fmtTime(g.kickoff)+'</span>':'')+(preKickoffLocked?'<span class="lockedbadge">&#128274; Picks locked</span>':'')+'<span class="gtitle">'+esc(g.title||'')+'</span><button class="editscore" data-edit-game="'+esc(g.id)+'" title="Edit score" aria-label="Edit score">&#9998;</button></div>'+
         '<div class="teams">'+
           teamBtn(g.awayAbbr, false)+
           '<div class="vs"><span class="at">@</span>'+(isLive?'<span class="clk">LIVE</span>':'')+'</div>'+
