@@ -529,30 +529,46 @@
     });
     root.querySelectorAll('[data-pin-key]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        var k = btn.getAttribute('data-pin-key');
-        var L = state.login;
-        if (k==='del'){ L.pin = L.pin.slice(0,-1); L.err=false; render(); return; }
-        if (L.pin.length>=4) return;
-        L.pin += k;
-        if (L.pin.length===4){
-          if (L.pin === String(state.config.pin)){
-            state.player = L.pending;
-            try{ localStorage.setItem('pickem_player', state.player); }catch(e){}
-            state.login = {step:'pick', pending:null, pin:'', err:false};
-            render();
-          } else {
-            L.err = true;
-            render();
-            setTimeout(function(){ L.pin=''; L.err=false; render(); }, 650);
-          }
-        } else {
-          render();
-        }
+        pressPinKey(btn.getAttribute('data-pin-key'));
       });
     });
     var back = root.querySelector('[data-pin-back]');
     if (back) back.addEventListener('click', function(){ state.login.step='pick'; render(); });
   }
+
+  function pressPinKey(k){
+    var L = state.login;
+    if (L.step !== 'pin') return;
+    if (k==='del'){ L.pin = L.pin.slice(0,-1); L.err=false; render(); return; }
+    if (L.pin.length>=4) return;
+    L.pin += k;
+    if (L.pin.length===4){
+      if (L.pin === String(state.config.pin)){
+        state.player = L.pending;
+        try{ localStorage.setItem('pickem_player', state.player); }catch(e){}
+        state.login = {step:'pick', pending:null, pin:'', err:false};
+        render();
+      } else {
+        L.err = true;
+        render();
+        setTimeout(function(){ L.pin=''; L.err=false; render(); }, 650);
+      }
+    } else {
+      render();
+    }
+  }
+
+  // Let PC/laptop users type their PIN with the physical keyboard, not just
+  // click the on-screen keypad: digits 0-9 enter a key, Backspace deletes,
+  // Escape backs out to the player picker.
+  document.addEventListener('keydown', function(e){
+    if (!state.login || state.player) return;
+    if (state.login.step === 'pin'){
+      if (e.key >= '0' && e.key <= '9'){ e.preventDefault(); pressPinKey(e.key); }
+      else if (e.key === 'Backspace'){ e.preventDefault(); pressPinKey('del'); }
+      else if (e.key === 'Escape'){ e.preventDefault(); state.login.step='pick'; render(); }
+    }
+  });
 
   function renderHeader(){
     var weeks = allWeeksWithGames();
