@@ -204,6 +204,7 @@
   .vs{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; width:38px; flex-shrink:0;}
   .vs .at{color:var(--muted); font-size:12px; font-weight:700;}
   .vs .clk{font-size:10px; color:var(--live); font-weight:700; text-align:center;}
+  .oddsrow{text-align:center; font-size:11.5px; font-weight:600; color:var(--muted); margin-top:8px; letter-spacing:.02em;}
   .picksrow{display:flex; gap:14px; margin-top:9px; padding-top:9px; border-top:1px dashed var(--line);}
   .pickpill{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); font-weight:600;}
   .pickpill b{color:var(--ink); font-weight:700;}
@@ -683,6 +684,14 @@
     });
     picksRow += '</div>';
 
+    var oddsRow = '';
+    if (g.spreadDetails || typeof g.overUnder === 'number'){
+      var oddsParts = [];
+      if (g.spreadDetails) oddsParts.push(esc(g.spreadDetails));
+      if (typeof g.overUnder === 'number') oddsParts.push('O/U '+g.overUnder);
+      oddsRow = '<div class="oddsrow">'+oddsParts.join(' &middot; ')+'</div>';
+    }
+
     return (
       '<div class="game">'+
         '<div class="gametop"><span class="status '+(isLive?'live':isFinal?'final':'')+'">'+statusTxt+'</span>'+((isFinal||isLive)?'<span class="kickofftime">'+fmtTime(g.kickoff)+'</span>':'')+(preKickoffLocked?'<span class="lockedbadge">&#128274; Picks locked</span>':'')+'<span class="gtitle">'+esc(g.title||'')+'</span><button class="editscore" data-edit-game="'+esc(g.id)+'" title="Edit score" aria-label="Edit score">&#9998;</button></div>'+
@@ -691,6 +700,7 @@
           '<div class="vs"><span class="at">@</span>'+(isLive?'<span class="clk">LIVE</span>':'')+'</div>'+
           teamBtn(g.homeAbbr, true)+
         '</div>'+
+        oddsRow+
         picksRow+
       '</div>'
     );
@@ -776,7 +786,7 @@
       render();
     });
     var refreshBtn = root.querySelector('[data-refresh-scores]');
-    if (refreshBtn) refreshBtn.addEventListener('click', function(){ syncScoresNow(); });
+    if (refreshBtn) refreshBtn.addEventListener('click', function(){ syncScoresNow().then(syncOddsNow); });
     root.querySelectorAll('[data-week-nav]').forEach(function(btn){
       btn.addEventListener('click', function(){
         state.selectedWeek += parseInt(btn.getAttribute('data-week-nav'),10);
@@ -919,6 +929,38 @@
     return fetch(url).then(function(r){ return r.json(); });
   }
 
+  // Betting odds come from ESPN's free, no-key "summary" endpoint (same
+  // origin/CORS as the scoreboard calls above), via its "pickcenter" field.
+  // Fetched per-event, so this runs less often than the score sync: once at
+  // boot, on manual refresh, and on a slow background interval - not on the
+  // 90-second score-sync tick - to keep the number of requests reasonable.
+  function fetchOdds(eventId){
+    var url = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event='+eventId;
+    return fetch(url).then(function(r){ return r.json(); }).then(function(j){
+      var pc = j.pickcenter && j.pickcenter[0];
+      if (!pc) return null;
+      return {
+        spreadDetails: pc.details || null,
+        overUnder: (typeof pc.overUnder === 'number') ? pc.overUnder : null,
+        spread: (typeof pc.spread === 'number') ? pc.spread : null
+      };
+    }).catch(function(){ return null; });
+  }
+
+  function syncOddsNow(){
+    if (!state.db) return Promise.resolve();
+    var games = state.games.filter(function(g){
+      return g.eventId && (g.state !== 'final' || g.spreadDetails == null);
+    });
+    if (!games.length) return Promise.resolve();
+    return Promise.all(games.map(function(g){
+      return fetchOdds(g.eventId).then(function(odds){
+        if (!odds) return null;
+        return state.db.collection('games').doc(g.id).set(odds, {merge:true}).catch(function(){});
+      });
+    })).then(function(){ scheduleRender(); });
+  }
+
   function syncScoresNow(){
     if (!state.db || state.syncing) return Promise.resolve();
     state.syncing = true; scheduleRender();
@@ -997,8 +1039,9 @@
       scheduleRender();
     }, function(){});
 
-    syncScoresNow();
+    syncScoresNow().then(syncOddsNow);
     setInterval(syncScoresNow, 90000);
+    setInterval(syncOddsNow, 15*60000);
     document.addEventListener('visibilitychange', function(){ if (!document.hidden) syncScoresNow(); });
   }
 
