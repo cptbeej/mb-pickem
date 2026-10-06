@@ -204,6 +204,7 @@
   .vs{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; width:38px; flex-shrink:0;}
   .vs .at{color:var(--muted); font-size:12px; font-weight:700;}
   .vs .clk{font-size:10px; color:var(--live); font-weight:700; text-align:center;}
+  .teambtn .rec{font-size:11px; font-weight:600; color:var(--muted); margin-top:1px;}
   .oddsrow{text-align:center; font-size:11.5px; font-weight:600; color:var(--muted); margin-top:8px; letter-spacing:.02em;}
   .picksrow{display:flex; gap:14px; margin-top:9px; padding-top:9px; border-top:1px dashed var(--line);}
   .pickpill{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); font-weight:600;}
@@ -654,7 +655,8 @@
     function teamBtn(abbr, isHome){
       var name = g[isHome?'homeName':'awayName'] || TEAM_NAMES[abbr] || abbr;
       var score = g[isHome?'homeScore':'awayScore'];
-      var mine = myPick && myPick.teamAbbr === abbr;
+      var rec = g[isHome?'homeRecord':'awayRecord'];
+      var mine =myPick && myPick.teamAbbr === abbr;
       var otherHas = locked && otherPick && otherPick.teamAbbr === abbr;
       var cls = 'teambtn';
       if (mine) cls += ' mine';
@@ -663,7 +665,7 @@
       var disabled = locked ? 'disabled' : '';
       var scoreHtml = (isLive || isFinal) ? '<span class="sc tabular">'+(score==null?0:score)+'</span>' : '';
       return '<button class="'+cls+'" '+disabled+' data-pick-team="'+esc(abbr)+'" data-pick-week="'+g.week+'" data-pick-event="'+esc(g.eventId)+'">'+
-        '<span class="ab">'+esc(abbr)+'</span><span class="nm">'+esc(name)+'</span>'+scoreHtml+
+        '<span class="ab">'+esc(abbr)+'</span><span class="nm">'+esc(name)+'</span>'+(rec?'<span class="rec tabular">'+esc(rec)+'</span>':'')+scoreHtml+
         (otherHas ? '<span style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-top:2px;">'+esc(otherName)+'&#39;s pick</span>' : '')+
       '</button>';
     }
@@ -907,7 +909,9 @@
     if (!comp) return null;
     var home, away;
     comp.competitors.forEach(function(c){
-      var side = { abbr: normAbbr(c.team.abbreviation), name: c.team.name || c.team.shortDisplayName, score: parseInt(c.score,10)||0 };
+      var rec = null;
+      (c.records||[]).forEach(function(r){ if (r.type === 'total' || r.name === 'overall') rec = r.summary || null; });
+      var side = { abbr: normAbbr(c.team.abbreviation), name: c.team.name || c.team.shortDisplayName, score: parseInt(c.score,10)||0, record: rec };
       if (c.homeAway === 'home') home = side; else away = side;
     });
     if (!home || !away) return null;
@@ -918,6 +922,8 @@
       awayAbbr: away.abbr, awayName: away.name, homeAbbr: home.abbr, homeName: home.name,
       state: state_, awayScore: away.score, homeScore: home.score
     };
+    if (away.record) doc.awayRecord = away.record;
+    if (home.record) doc.homeRecord = home.record;
     if (state_ === 'in'){ doc.quarter = ev.status.period; doc.clock = ev.status.displayClock; }
     if (state_ === 'final') doc.winnerAbbr = away.score === home.score ? null : (away.score > home.score ? away.abbr : home.abbr);
     if (/Thursday Night|Sunday Night|Monday Night/.test(ev.name||'')) doc.title = (ev.name.match(/\w+ Night Football/)||[])[0];
