@@ -967,37 +967,48 @@
     })).then(function(){ scheduleRender(); });
   }
 
-  function syncScoresNow(){
-    if (!state.db || state.syncing) return Promise.resolve();
-    state.syncing = true; scheduleRender();
-    // Determine "now"'s week from the actual calendar date, not from ESPN's
-    // self-reported current-week pointer (that pointer has been observed to
-    // drift ahead of the real schedule mid-week). Explicit &week=N requests
-    // to ESPN return that week's real games reliably.
-    var wk = computeWeekFromDate(new Date().toISOString());
-    return fetchWeek(wk).then(function(json){
-      if (!json.events) throw new Error('bad-response');
-      var batch = state.db.batch();
+  // Weeks to ask ESPN about on every sync: last week, this week, next week,
+  // PLUS any earlier week that still holds a game we have not marked final
+  // even though its kickoff was more than ~30 minutes ago (a game that ended
+  // after the last sync and then rolled out of the current/next window).
+  function weeksToSync(wk){
+    var set = {};
+    [wk-1, wk, wk+1].forEach(function(w){ if (w >= 1) set[w] = true; });
+    var cutoff = Date.now() - 30*60000;
+    (state.games||[]).forEach(function(g){
+      if (g.state !== 'final' && g.week >= 1 && g.kickoff && new Date(g.kickoff).getTime() < cutoff) set[g.week] = true;
+    });
+    return Object.keys(set).map(Number).sort(function(a,b){ return a-b; });
+  }
+
+  function syncWeek(w){
+    return fetchWeek(w).then(function(json){
+      var batch = state.db.batch(), n = 0;
       (json.events||[]).forEach(function(ev){
         var evWeek = computeWeekFromDate(ev.date);
         var d = espnEventToDoc(ev, evWeek);
-        if (d) batch.set(state.db.collection('games').doc('w'+evWeek+'-'+ev.id), d, {merge:true});
+        if (d){ batch.set(state.db.collection('games').doc('w'+evWeek+'-'+ev.id), d, {merge:true}); n++; }
       });
-      var p1 = batch.commit();
-      var p2 = fetchWeek(wk+1).then(function(json2){
-        var batch2 = state.db.batch();
-        (json2.events||[]).forEach(function(ev){
-          var evWeek = computeWeekFromDate(ev.date);
-          var d = espnEventToDoc(ev, evWeek);
-          if (d) batch2.set(state.db.collection('games').doc('w'+evWeek+'-'+ev.id), d, {merge:true});
-        });
-        return batch2.commit();
-      }).catch(function(){});
-      return Promise.all([p1, p2]).then(function(){
-        if (wk && state.config.currentWeek !== wk){
-          return state.db.doc('config/app').update({currentWeek: wk}).catch(function(){});
-        }
-      });
+      if (!json.events) throw new Error('bad-response');
+      return n ? batch.commit() : null;
+    });
+  }
+
+  function syncScoresNow(){
+    if (!state.db || state.syncing) return Promise.resolve();
+    state.syncing = true; scheduleRender();
+    // "Now"'s week comes from the calendar date, not ESPN's self-reported
+    // current-week pointer (which has drifted ahead of the real schedule).
+    var wk = computeWeekFromDate(new Date().toISOString());
+    var weeks = weeksToSync(wk);
+    // The current week must succeed; other weeks are best-effort.
+    return Promise.all(weeks.map(function(w){
+      var p = syncWeek(w);
+      return w === wk ? p : p.catch(function(){});
+    })).then(function(){
+      if (wk && state.config.currentWeek !== wk){
+        return state.db.doc('config/app').update({currentWeek: wk}).catch(function(){});
+      }
     }).then(function(){
       state.lastSynced = new Date().toISOString();
       state.syncError = null;
@@ -1032,8 +1043,12 @@
       scheduleRender();
     }, function(){});
 
+    var gamesReadyResolve;
+    var gamesReady = new Promise(function(res){ gamesReadyResolve = res; });
+    setTimeout(function(){ gamesReadyResolve(); }, 4000); // don't hang if the snapshot is slow
     db.collection('games').onSnapshot(function(qs){
       state.games = qs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+      gamesReadyResolve();
       if (state.selectedWeek == null){
         state.selectedWeek = computeWeekFromDate(new Date().toISOString());
       }
@@ -1045,7 +1060,7 @@
       scheduleRender();
     }, function(){});
 
-    syncScoresNow().then(syncOddsNow);
+    gamesReady.then(syncScoresNow).then(syncOddsNow);
     setInterval(syncScoresNow, 90000);
     setInterval(syncOddsNow, 15*60000);
     document.addEventListener('visibilitychange', function(){ if (!document.hidden) syncScoresNow(); });
