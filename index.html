@@ -200,6 +200,8 @@
   }
   .teambtn.winner{background:color-mix(in srgb, var(--win) 16%, var(--surface)); border-color:var(--win);}
   .teambtn.loser{opacity:.55;}
+  .teambtn.tied{background:color-mix(in srgb, var(--muted) 14%, var(--surface)); border-color:var(--muted);}
+  .tienote{font-size:12px; color:var(--muted); text-align:center; margin:8px 0 2px;}
   .teambtn:disabled{cursor:default;}
   .vs{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; width:38px; flex-shrink:0;}
   .vs .at{color:var(--muted); font-size:12px; font-weight:700;}
@@ -210,6 +212,7 @@
   .pickpill{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); font-weight:600;}
   .pickpill b{color:var(--ink); font-weight:700;}
   .pickpill .correct{color:var(--win);}
+  .pickpill .tie{color:var(--muted);}
   .pickpill .wrong{color:var(--loss); text-decoration:line-through; text-decoration-color:var(--loss);}
 
   /* ---- standings ---- */
@@ -381,22 +384,31 @@
     return Object.keys(s).map(Number).sort(function(a,b){return a-b;});
   }
 
+  // A tie: game is final, scores are level, no winner. Ties earn no credit and no penalty.
+  function isTie(g){
+    return g.state === 'final' && !g.winnerAbbr && g.awayScore != null && g.awayScore === g.homeScore;
+  }
+
   function playerRecord(player){
-    var correct=0, incorrect=0, pending=0;
+    var correct=0, incorrect=0, ties=0;
     state.games.forEach(function(g){
-      if (g.state !== 'final' || !g.winnerAbbr) return;
       var p = pickFor(g.week, g.eventId, player);
+      if (isTie(g)){ if (p) ties++; return; }
+      if (g.state !== 'final' || !g.winnerAbbr) return;
       if (!p) return;
       if (p.teamAbbr === g.winnerAbbr) correct++; else incorrect++;
     });
-    return {correct:correct, incorrect:incorrect};
+    return {correct:correct, incorrect:incorrect, ties:ties};
   }
+
+  function recText(r){ return r.correct+'-'+r.incorrect+(r.ties?'-'+r.ties:''); }
 
   function weeklyBreakdown(){
     var weeks = allWeeksWithGames();
     return weeks.map(function(wk){
-      var row = {week:wk, a:0, b:0, finals:0};
+      var row = {week:wk, a:0, b:0, finals:0, ties:0};
       state.games.filter(function(g){return g.week===wk;}).forEach(function(g){
+        if (isTie(g)){ row.ties++; return; }
         if (g.state!=='final' || !g.winnerAbbr) return;
         row.finals++;
         var pa = pickFor(wk, g.eventId, state.config.playerA);
@@ -405,7 +417,7 @@
         if (pb && pb.teamAbbr===g.winnerAbbr) row.b++;
       });
       return row;
-    }).filter(function(r){ return r.finals>0; });
+    }).filter(function(r){ return r.finals>0 || r.ties>0; });
   }
 
   // ---------- rendering ----------
@@ -622,6 +634,7 @@
       if (pb && pb.teamAbbr===g.winnerAbbr) bCorrect++;
     });
     var myCorrect = meIsA ? aCorrect : bCorrect, otherCorrect = meIsA ? bCorrect : aCorrect;
+    var weekTies = games.filter(isTie).length;
     var myPicksMade = games.filter(function(g){ return pickFor(wk,g.eventId,myName); }).length;
 
     var html = '<div class="weeksum">'+
@@ -629,6 +642,8 @@
       '<div class="sumcard"><div class="lbl">'+esc(otherName)+'</div><div class="val tabular">'+otherCorrect+'<small>&nbsp;correct</small></div></div>'+
       '<div class="sumcard"><div class="lbl">Picks made</div><div class="val tabular">'+myPicksMade+'<small>&nbsp;/ '+games.length+'</small></div></div>'+
     '</div>';
+
+    if (weekTies) html += '<div class="tienote">'+weekTies+(weekTies>1?' games ended':' game ended')+' in a tie &mdash; no points either way.</div>';
 
     var lastDay = null;
     games.forEach(function(g){
@@ -646,9 +661,11 @@
     var isFinal = g.state==='final';
     var isLive = g.state==='in';
     var preKickoffLocked = locked && !isFinal && !isLive;
+    var tied = isTie(g);
 
     var statusTxt;
-    if (isFinal) statusTxt = 'Final';
+    if (tied) statusTxt = 'Final &middot; Tie';
+    else if (isFinal) statusTxt = 'Final';
     else if (isLive) statusTxt = 'Q'+(g.quarter||'')+' &middot; '+(g.clock||'Live');
     else statusTxt = fmtTime(g.kickoff);
 
@@ -660,6 +677,7 @@
       var otherHas = locked && otherPick && otherPick.teamAbbr === abbr;
       var cls = 'teambtn';
       if (mine) cls += ' mine';
+      if (tied) cls += ' tied';
       if (isFinal && g.winnerAbbr === abbr) cls += ' winner';
       if (isFinal && g.winnerAbbr && g.winnerAbbr !== abbr) cls += ' loser';
       var disabled = locked ? 'disabled' : '';
@@ -677,8 +695,8 @@
       if (!locked && nm===otherName){
         txt = pk ? '<span class="pickpill">'+esc(nm)+': <b>picked</b></span>' : '<span class="pickpill">'+esc(nm)+': <b>no pick yet</b></span>';
       } else if (pk){
-        var correctCls = isFinal && g.winnerAbbr ? (pk.teamAbbr===g.winnerAbbr ? 'correct' : 'wrong') : '';
-        txt = '<span class="pickpill">'+esc(nm)+': <b class="'+correctCls+'">'+esc(pk.teamAbbr)+'</b></span>';
+        var correctCls = tied ? 'tie' : (isFinal && g.winnerAbbr ? (pk.teamAbbr===g.winnerAbbr ? 'correct' : 'wrong') : '');
+        txt = '<span class="pickpill">'+esc(nm)+': <b class="'+correctCls+'">'+esc(pk.teamAbbr)+'</b>'+(tied?' <span class="tie">(T)</span>':'')+'</span>';
       } else {
         txt = '<span class="pickpill">'+esc(nm)+': <b>no pick</b></span>';
       }
@@ -717,9 +735,9 @@
     var topDogCrown = '<div class="crown"><img class="crowndog" src="'+DOG_SRC+'" alt="">Top Dog</div>';
     var html = '<div class="lbrow">'+
       '<div class="plcard '+(leaderA?'leader':'')+'">'+(leaderA?topDogCrown:'')+
-        '<div class="pname">'+esc(a)+'</div><div class="big tabular">'+ra.correct+'</div><div class="rec">'+ra.correct+'-'+ra.incorrect+' &middot; '+pct(ra)+'%</div></div>'+
+        '<div class="pname">'+esc(a)+'</div><div class="big tabular">'+ra.correct+'</div><div class="rec">'+recText(ra)+' &middot; '+pct(ra)+'%</div></div>'+
       '<div class="plcard '+(leaderB?'leader':'')+'">'+(leaderB?topDogCrown:'')+
-        '<div class="pname">'+esc(b)+'</div><div class="big tabular">'+rb.correct+'</div><div class="rec">'+rb.correct+'-'+rb.incorrect+' &middot; '+pct(rb)+'%</div></div>'+
+        '<div class="pname">'+esc(b)+'</div><div class="big tabular">'+rb.correct+'</div><div class="rec">'+recText(rb)+' &middot; '+pct(rb)+'%</div></div>'+
     '</div>';
 
     var rows = weeklyBreakdown();
@@ -733,6 +751,8 @@
       html += '<tr><td>Wk '+r.week+'</td><td class="tabular '+(aWin?'win-tag':'')+'">'+r.a+'</td><td class="tabular '+(bWin?'win-tag':'')+'">'+r.b+'</td></tr>';
     });
     html += '</tbody></table></div>';
+    var totalTies = rows.reduce(function(n,r){ return n + r.ties; }, 0);
+    if (totalTies) html += '<div class="tienote">Records read W-L-T. '+totalTies+(totalTies>1?' tied games give':' tied game gives')+' no points to either player.</div>';
     return html;
   }
 
